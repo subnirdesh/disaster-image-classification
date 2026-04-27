@@ -179,3 +179,87 @@ def print_summary_table(results):
     # Find best model
     best = max(results, key=lambda m: results[m]["f1"])
     print(f"\n  Best model: {best.upper()} (F1: {results[best]['f1']*100:.2f}%)")
+
+def plot_per_class_f1(results, save_dir):
+    """Bar chart showing F1 per class for each model."""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    colors = {"baseline": "#E24B4A", "improved": "#378ADD", "resnet50": "#1D9E75"}
+
+    for ax, (model_name, r) in zip(axes, results.items()):
+        report = r["report"]
+        classes, f1_scores = [], []
+
+        for cls, metrics in report.items():
+            if cls in ("accuracy", "macro avg", "weighted avg"):
+                continue
+            classes.append(cls.replace("_", "\n"))
+            f1_scores.append(metrics["f1-score"] * 100)
+
+        bars = ax.barh(classes, f1_scores, color=colors.get(model_name, "gray"), alpha=0.85)
+        ax.set_xlim(0, 100)
+        ax.set_title(f"{model_name.replace('resnet50','ResNet-50').title()}\nPer-class F1", fontsize=12)
+        ax.set_xlabel("F1 Score (%)")
+        ax.grid(axis="x", alpha=0.3)
+
+        for bar, score in zip(bars, f1_scores):
+            ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
+                   f"{score:.1f}%", va="center", fontsize=8)
+
+    plt.suptitle("Per-class F1 Score — All Models", fontsize=14, y=1.02)
+    plt.tight_layout()
+    path = os.path.join(save_dir, "per_class_f1.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+def plot_misclassified(model, test_loader, device, class_names, model_name, save_dir, n=6):
+    """Show n images the model got wrong."""
+    model.eval()
+    wrong_images, wrong_preds, wrong_labels = [], [], []
+
+    mean = torch.tensor([0.485, 0.456, 0.406])
+    std  = torch.tensor([0.229, 0.224, 0.225])
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            outputs = model(images.to(device))
+            preds = outputs.argmax(1).cpu()
+            mask = preds != labels
+
+            for img, pred, label in zip(images[mask], preds[mask], labels[mask]):
+                # unnormalize
+                img = img * std[:, None, None] + mean[:, None, None]
+                img = img.permute(1, 2, 0).clamp(0, 1).numpy()
+                wrong_images.append(img)
+                wrong_preds.append(pred.item())
+                wrong_labels.append(label.item())
+
+            if len(wrong_images) >= n:
+                break
+
+    n = min(n, len(wrong_images))
+    if n == 0:
+        print(f"  No misclassified images found for {model_name}")
+        return
+
+    fig, axes = plt.subplots(2, 3, figsize=(12, 8))
+    axes = axes.flatten()
+
+    for i in range(n):
+        axes[i].imshow(wrong_images[i])
+        axes[i].axis("off")
+        true_label = class_names[wrong_labels[i]].replace("_", "\n")
+        pred_label = class_names[wrong_preds[i]].replace("_", "\n")
+        axes[i].set_title(
+            f"True: {true_label}\nPred: {pred_label}",
+            fontsize=9,
+            color="red"
+        )
+
+    plt.suptitle(f"Misclassified Examples — {model_name.replace('resnet50','ResNet-50').title()}", fontsize=13)
+    plt.tight_layout()
+    path = os.path.join(save_dir, f"misclassified_{model_name}.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
